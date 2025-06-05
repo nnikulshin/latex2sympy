@@ -159,25 +159,14 @@ def convert_relation(rel):
         return sympy.Eq(lh, rh, evaluate=False)
     elif rel.ASSIGNMENT():
         # !Use Global variances
-        if lh.is_Symbol:
+        if lh.is_Symbol or lh.is_Indexed:
             # set value
             variances[lh] = rh
             var[str(lh)] = rh
             return rh
         else:
-            # find the symbols in lh - rh
-            equation = lh - rh
-            syms = equation.atoms(sympy.Symbol)
-            if len(syms) > 0:
-                # Solve equation
-                result = []
-                for sym in syms:
-                    values = sympy.solve(equation, sym)
-                    for value in values:
-                        result.append(sympy.Eq(sym, value, evaluate=False))
-                return result
-            else:
-                return sympy.Eq(lh, rh, evaluate=False)
+            # if not assignment, then equation
+            return sympy.Eq(lh, rh, evaluate=False)
     elif rel.IN():
         # !Use Global variances
         if hasattr(rh, 'is_Pow') and rh.is_Pow and hasattr(rh.exp, 'is_Mul'):
@@ -474,8 +463,6 @@ def convert_postfix_list(arr, i=0):
                 return mat_mul_flat(res, rh)
             else:
                 return mul_flat(res, rh)
-    elif isinstance(res, tuple) or isinstance(res, list) or isinstance(res, dict):
-        return res
     else:  # must be derivative
         wrt = res[0]
         if i == len(arr) - 1:
@@ -528,13 +515,10 @@ def convert_postfix(postfix):
                 exp = at_a
         elif op.transpose():
             try:
-                exp = exp.T
+                exp = sympy.transpose(exp, evaluate=False)
             except:
-                try:
-                    exp = sympy.transpose(exp)
-                except:
-                    pass
                 pass
+            pass
 
     return exp
 
@@ -581,8 +565,7 @@ def convert_comp(comp):
     elif comp.matrix():
         return convert_matrix(comp.matrix())
     elif comp.det():
-        # !Use Global variances
-        return convert_matrix(comp.det()).subs(variances).det()
+        return sympy.Determinant(convert_matrix(comp.det()))
     elif comp.func():
         return convert_func(comp.func())
 
@@ -600,7 +583,7 @@ def convert_atom(atom):
         elif atom_expr.GREEK_CMD():
             atom_text = atom_expr.GREEK_CMD().getText()[1:].strip()
         elif atom_expr.OTHER_SYMBOL_CMD():
-            atom_text = atom_expr.OTHER_SYMBOL_CMD().getText().strip()
+            atom_text = atom_expr.OTHER_SYMBOL_CMD().getText()[1:].strip()
         elif atom_expr.accent():
             atom_accent = atom_expr.accent()
             # get name for accent
@@ -619,32 +602,29 @@ def convert_atom(atom):
             atom_text = name + '{' + base + '}'
 
         # find atom's subscript, if any
-        subscript_text = ''
+        indexed_symbol = None
         if atom_expr.subexpr():
             subexpr = atom_expr.subexpr()
             subscript = None
             if subexpr.expr():  # subscript is expr
-                subscript = subexpr.expr().getText().strip()
+                subscript = convert_expr(subexpr.expr())
             elif subexpr.atom():  # subscript is atom
-                subscript = subexpr.atom().getText().strip()
+                subscript = convert_atom(subexpr.atom())
             elif subexpr.args():  # subscript is args
-                subscript = subexpr.args().getText().strip()
-            subscript_inner_text = StrPrinter().doprint(subscript)
-            if len(subscript_inner_text) > 1:
-                subscript_text = '_{' + subscript_inner_text + '}'
-            else:
-                subscript_text = '_' + subscript_inner_text
+                args = subexpr.args().getText().strip().split(",")
+                subscript = tuple(map(lambda arg: latex2sympy(arg, VARIABLE_VALUES), args))
+            indexed_symbol = sympy.IndexedBase(atom_text)
 
         # construct the symbol using the text and optional subscript
-        atom_symbol = sympy.Symbol(atom_text + subscript_text, real=is_real)
+        atom_symbol = sympy.Symbol(atom_text, real=is_real) if not indexed_symbol else indexed_symbol[subscript]
         # for matrix symbol
         matrix_symbol = None
         global var
-        if atom_text + subscript_text in var:
+        if atom_text in var:
             try:
-                rh = var[atom_text + subscript_text]
+                rh = var[atom_text]
                 shape = sympy.shape(rh)
-                matrix_symbol = sympy.MatrixSymbol(atom_text + subscript_text, shape[0], shape[1])
+                matrix_symbol = sympy.MatrixSymbol(atom_text, shape[0], shape[1])
                 variances[matrix_symbol] = variances[atom_symbol]
             except:
                 pass
@@ -685,8 +665,8 @@ def convert_atom(atom):
         except (TypeError, ValueError):
             return sympy.Number(s)
     elif atom.DIFFERENTIAL():
-        var = get_differential_var(atom.DIFFERENTIAL())
-        return sympy.Symbol('d' + var.name, real=is_real)
+        v = get_differential_var(atom.DIFFERENTIAL())
+        return sympy.Symbol('d' + v.name, real=is_real)
     elif atom.mathit():
         text = rule2text(atom.mathit().mathit_text())
         return sympy.Symbol(text, real=is_real)
@@ -727,6 +707,19 @@ def convert_atom(atom):
             number = sympy.Number(text)
         percent = sympy.Rational(number, 100)
         return percent
+    
+    elif atom.PREV_OUT():
+        if "out" in VARIABLE_VALUES:
+            index = int(atom.PREV_OUT().getText().strip("@out[] "))
+            return VARIABLE_VALUES["out"][index]
+        else:
+            raise ValueError("Output history array was not passed to latex2sympy.")
+    elif atom.PREV_IN():
+        if "in" in VARIABLE_VALUES:
+            index = int(atom.PREV_IN().getText().strip("@in[] "))
+            return VARIABLE_VALUES["in"][index]
+        else:
+            raise ValueError("Input history array was not passed to latex2sympy.")
 
 
 def rule2text(ctx):
@@ -742,40 +735,40 @@ def rule2text(ctx):
 def convert_frac(frac):
     diff_op = False
     partial_op = False
-    lower_itv = frac.lower.getSourceInterval()
-    lower_itv_len = lower_itv[1] - lower_itv[0] + 1
-    if (frac.lower.start == frac.lower.stop and
-            frac.lower.start.type == PSLexer.DIFFERENTIAL):
-        wrt = get_differential_var_str(frac.lower.start.text)
+    if (frac.lower.start.type == PSLexer.DIFFERENTIAL):
+        wrt = convert_differential(frac.lower)
         diff_op = True
-    elif (lower_itv_len == 2 and
-          frac.lower.start.type == PSLexer.SYMBOL and
-          frac.lower.start.text == '\\partial' and
-          (frac.lower.stop.type == PSLexer.LETTER_NO_E or frac.lower.stop.type == PSLexer.SYMBOL)):
+    elif (frac.lower.start.type == PSLexer.SYMBOL and frac.lower.start.text == '\\partial'):
         partial_op = True
-        wrt = frac.lower.stop.text
-        if frac.lower.stop.type == PSLexer.SYMBOL:
-            wrt = wrt[1:]
+        wrt = convert_differential(frac.lower)
 
     if diff_op or partial_op:
-        wrt = sympy.Symbol(wrt, real=is_real)
-        if (diff_op and frac.upper.start == frac.upper.stop and
+        if (frac.upper.additive() and frac.upper.additive().mp() and frac.upper.additive().mp().unary() and frac.upper.additive().mp().unary().postfix()):
+            postfix = frac.upper.additive().mp().unary().postfix()
+        else:
+            raise Exception("Incorrectly formatted differential")
+        
+        if (diff_op and len(postfix) == 1 and
             frac.upper.start.type == PSLexer.LETTER_NO_E and
                 frac.upper.start.text == 'd'):
-            return [wrt]
-        elif (partial_op and frac.upper.start == frac.upper.stop and
+            check_upper_lower_order(wrt, postfix[0])
+            return wrt
+        elif (partial_op and len(postfix) == 1 and
               frac.upper.start.type == PSLexer.SYMBOL and
               frac.upper.start.text == '\\partial'):
-            return [wrt]
-        upper_text = rule2text(frac.upper)
+            check_upper_lower_order(wrt, postfix[0])
+            return wrt
 
         expr_top = None
-        if diff_op and upper_text.startswith('d'):
-            expr_top = latex2sympy(upper_text[1:])
-        elif partial_op and frac.upper.start.text == '\\partial':
-            expr_top = latex2sympy(upper_text[len('\\partial'):])
+        if (diff_op and (len(postfix) == 2 or len(postfix) == 1 and len(rule2text(postfix[0])) > 1) and frac.upper.start.text.startswith('d')):
+            expr_top = convert_exp(postfix[1].exp()) if len(postfix) == 2 else latex2sympy(rule2text(postfix[0])[1:])
+        elif (partial_op and len(postfix) == 2 and frac.upper.start.text == '\\partial'):
+            expr_top = convert_exp(postfix[1].exp())
+        elif (len(postfix) > 2):
+            raise Exception("Stray factor in derivative numerator")
         if expr_top:
-            return sympy.Derivative(expr_top, wrt)
+            check_upper_lower_order(wrt, postfix[0])
+            return sympy.Derivative(expr_top, *wrt)
 
     expr_top = convert_expr(frac.upper)
     expr_bot = convert_expr(frac.lower)
@@ -783,6 +776,58 @@ def convert_frac(frac):
         return sympy.MatMul(expr_top, sympy.Pow(expr_bot, -1, evaluate=False), evaluate=False)
     else:
         return sympy.Mul(expr_top, sympy.Pow(expr_bot, -1, evaluate=False), evaluate=False)
+
+
+def check_upper_lower_order(wrt, diff):
+    lower_order = 0
+    for var in wrt:
+        lower_order += var[1]
+    
+    diff_part = convert_exp(diff.exp())
+    if isinstance(diff_part, sympy.Pow):
+        upper_order = diff_part.exp
+    else:
+        upper_order = 1
+    
+    if (upper_order != lower_order):
+        print(upper_order)
+        print(lower_order)
+        raise Exception("The orders in the numerator and denominator of the derivative do not match")
+
+
+def convert_differential(diff):
+    if (diff.additive() and diff.additive().mp() and diff.additive().mp().unary() and diff.additive().mp().unary().postfix()):
+        postfix = diff.additive().mp().unary().postfix()
+    else:
+        raise Exception("Incorrectly formatted differential")
+    
+    part_txt = rule2text(postfix[0])
+    if (part_txt == '\\partial'):
+        partial_diff = True
+    elif (part_txt.startswith('d')):
+        partial_diff = False
+    else:
+        raise Exception("Incorrectly formatted differential: missing differential sign at beginning")
+    
+    wrt = []
+    for i, part in enumerate(postfix):
+        part_txt = rule2text(part)
+        if (i % 2 == 0 and partial_diff and part_txt != "\\partial"):
+            raise Exception("Missing \\partial sign in partial differential")
+        elif (not partial_diff and not part_txt.startswith('d')):
+            raise Exception("Missing 'd' in ordinary differential")
+        elif (i % 2 != 0 or not partial_diff):
+            var_part = convert_exp(part.exp())
+            
+            if isinstance(var_part, sympy.Pow):
+                wrt.append((var_part.base if partial_diff else latex2sympy(var_part.base.name[1:]), var_part.exp))
+            elif isinstance(var_part, sympy.Symbol):
+                wrt.append((var_part if partial_diff else latex2sympy(var_part.name[1:]), 1))
+            else:
+                raise Exception("Expected wrt variable and order in differential")
+    
+    return wrt
+                    
 
 
 def convert_binom(binom):
@@ -866,7 +911,7 @@ def convert_func(func):
         elif name == "ceil":
             expr = handle_ceil(arg)
         elif name == 'det':
-            expr = arg.det()
+            expr = sympy.Determinant(arg)
 
         func_pow = None
         should_pow = True
@@ -1039,7 +1084,7 @@ def handle_limit(func):
     elif sub.GREEK_CMD():
         var = sympy.Symbol(sub.GREEK_CMD().getText()[1:].strip(), real=is_real)
     elif sub.OTHER_SYMBOL_CMD():
-        var = sympy.Symbol(sub.OTHER_SYMBOL_CMD().getText().strip(), real=is_real)
+        var = sympy.Symbol(sub.OTHER_SYMBOL_CMD().getText()[1:].strip(), real=is_real)
     else:
         var = sympy.Symbol('x', real=is_real)
     if sub.SUB():
@@ -1120,6 +1165,7 @@ def latex(tex):
     result = result.replace(r'\left', r'', -1).replace(r'\right', r'', -1)
     result = result.replace(r' )', r')', -1)
     result = result.replace(r'\log', r'\ln', -1)
+    result = result.replace(r'digamma', r'\digamma', -1)
     return result
 
 
@@ -1133,16 +1179,16 @@ def latex2latex(tex):
 
 
 # Set image value
-latex2latex('i=I')
-latex2latex('j=I')
+latex2latex(r'i \equiv I')
+latex2latex(r'j \equiv I')
 # set Identity(i)
-for i in range(1, 10):
-    lh = sympy.Symbol(r'\bm{I}_' + str(i), real=False)
-    lh_m = sympy.MatrixSymbol(r'\bm{I}_' + str(i), i, i)
-    rh = sympy.Identity(i).as_mutable()
-    variances[lh] = rh
-    variances[lh_m] = rh
-    var[str(lh)] = rh
+#for i in range(1, 10):
+#    lh = sympy.Symbol(r'\bm{I}_' + str(i), real=False)
+#    lh_m = sympy.MatrixSymbol(r'\bm{I}_' + str(i), i, i)
+#    rh = sympy.Identity(i).as_mutable()
+#    variances[lh] = rh
+#    variances[lh_m] = rh
+#    var[str(lh)] = rh
 
 if __name__ == '__main__':
     # latex2latex(r'A_1=\begin{bmatrix}1 & 2 & 3 & 4 \\ 5 & 6 & 7 & 8\end{bmatrix}')

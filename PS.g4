@@ -6,6 +6,10 @@ options {
 
 WS: [ \t\r\n]+ -> skip;
 DOLLAR_SIGN: '\\$' -> skip;
+TEXT: ('\\text' | COMMA '\\text' | COMMA WS '\\text') L_BRACE .*? R_BRACE -> skip;
+
+PREV_OUT: '@out[' SUB? DIGIT+ ']';
+PREV_IN: '@in[' SUB? DIGIT+ ']';
 
 ADD: '+';
 SUB: '-';
@@ -175,8 +179,8 @@ NUMBER:
 E_NOTATION: NUMBER E_NOTATION_E (SUB | ADD)? DIGIT+;
 
 IN: '\\in';
-ASSIGNMENT: '=';
-EQUAL: '==' | '\\equiv';
+ASSIGNMENT: '\\equiv';
+EQUAL: '=';
 LT: '<';
 LTE: '\\leq' | '\\le' | '\\leqslant';
 GT: '>';
@@ -242,7 +246,8 @@ fragment GREEK_LETTER:
     '\\Psi' |
     '\\psi' |
     '\\Omega' |
-    '\\omega';
+    '\\omega' |
+    '\\digamma';
 
 GREEK_CMD: GREEK_LETTER [ ]?;
 
@@ -322,8 +327,6 @@ accent_symbol:
     '\\overrightarrow'  |
     '\\bm'  |
     '\\boldsymbol'  |
-    '\\text'  |
-    '\\textit'  |
     '\\mathbb'  |
     '\\mathbin'  |
     '\\mathbf'  |
@@ -534,7 +537,7 @@ accent:
 
 atom_expr_no_supexpr: (LETTER_NO_E | GREEK_CMD | OTHER_SYMBOL_CMD | accent) subexpr?;
 atom_expr: (LETTER_NO_E | GREEK_CMD | OTHER_SYMBOL_CMD | accent) (supexpr subexpr | subexpr supexpr | subexpr | supexpr)?;
-atom: atom_expr | SYMBOL | NUMBER | PERCENT_NUMBER | E_NOTATION | DIFFERENTIAL | mathit | VARIABLE;
+atom: atom_expr | SYMBOL | NUMBER | PERCENT_NUMBER | E_NOTATION | DIFFERENTIAL | mathit | VARIABLE | PREV_OUT | PREV_IN;
 
 mathit: CMD_MATHIT L_BRACE mathit_text R_BRACE;
 mathit_text: (LETTER_NO_E | E_NOTATION_E | EXP_E)+;
