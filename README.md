@@ -4,9 +4,7 @@
 
 ## About
 
-`latex2sympy2` parses **LaTeX math expressions** and converts it into the equivalent **SymPy form**. The latex2sympy2 is adapted from [augustt198/latex2sympy](https://github.com/augustt198/latex2sympy) and [purdue-tlt / latex2sympy](https://github.com/purdue-tlt/latex2sympy).
-
-This project is a part of a VS Code extension called [Latex Sympy Calculator](https://marketplace.visualstudio.com/items?itemName=OrangeX4.latex-sympy-calculator). It is designed for providing people writing in latex or markdown a ability to calculate something when writing math expression.
+`latex2sympy2` parses **LaTeX math expressions** and converts it into the equivalent **SymPy form**. The latex2sympy2 is adapted from [augustt198/latex2sympy](https://github.com/augustt198/latex2sympy), [purdue-tlt/latex2sympy](https://github.com/purdue-tlt/latex2sympy) and [OrangeX4/latex2sympy](https://github.com/OrangeX4/latex2sympy).
 
 [ANTLR](http://www.antlr.org/) is used to generate the parser.
 
@@ -24,8 +22,9 @@ This project is a part of a VS Code extension called [Latex Sympy Calculator](ht
 
 ## Installation
 
+`cd` to the root directory of the repository, then run:
 ```
-pip install latex2sympy2
+pip install [-e] .
 ```
 
 **Requirements:** `sympy` and `antlr4-python3-runtime` packages.
@@ -154,7 +153,7 @@ latex2sympy(tex)
 from latex2sympy2 import latex2sympy, variances, var, set_variances
 
 # Assign x a value of 1
-latex2sympy(r"x = 1")
+latex2sympy(r"x \equiv 1")
 
 # Assign x a matrix symbol with dimension of n x m
 latex2sympy(r"x \in \mathbb{R}^{n \times m}")
@@ -171,10 +170,13 @@ print(variances)
 print(var["x"])
 # => "1"
 
-# Reset all variances
-set_variances({})
+# Reset variance
+latex2sympy(r"x \equiv")
 latex2sympy(r"x + y")
 # => "x + y"
+
+# To reset all variances, use
+set_variances({})
 ```
 
 ### Complex Number Support
@@ -188,7 +190,7 @@ set_real(False)
 
 ## Contributing
 
-If you want to add a new grammar, you can fork the code from [OrangeX4/latex2sympy](https://github.com/OrangeX4/latex2sympy).
+If you want to add a new grammar, you can fork the code from [nnikulshin/latex2sympy](https://github.com/nnikulshin/latex2sympy).
 
 * To modify parser grammar, view the existing structure in `PS.g4`.
 * To modify the action associated with each grammar, look into `latex2sympy.py`.
