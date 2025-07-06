@@ -378,6 +378,7 @@ matrix_row:
 
 relation:
     relation (IN | ASSIGNMENT | EQUAL | LT | LTE | GT | GTE | UNEQUAL) relation
+    | relation ASSIGNMENT
     | expr;
 
 relation_list:

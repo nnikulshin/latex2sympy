@@ -146,7 +146,16 @@ def convert_relation(rel):
         return convert_expr(rel.expr())
 
     lh = convert_relation(rel.relation(0))
-    rh = convert_relation(rel.relation(1))
+    if (rel.relation(1)):
+        rh = convert_relation(rel.relation(1))
+    else:
+        try:
+            del variances[lh]
+            del var[str(lh)]
+        except:
+            pass
+        return lh
+    
     if rel.LT():
         return sympy.StrictLessThan(lh, rh, evaluate=False)
     elif rel.LTE():
@@ -159,7 +168,7 @@ def convert_relation(rel):
         return sympy.Eq(lh, rh, evaluate=False)
     elif rel.ASSIGNMENT():
         # !Use Global variances
-        if lh.is_Symbol or lh.is_Indexed:
+        if lh.is_Symbol or lh.is_Indexed or isinstance(lh, sympy.core.function.AppliedUndef):
             # set value
             variances[lh] = rh
             var[str(lh)] = rh
@@ -783,15 +792,13 @@ def check_upper_lower_order(wrt, diff):
     for var in wrt:
         lower_order += var[1]
     
-    diff_part = convert_exp(diff.exp())
+    diff_part = latex2sympy(rule2text(diff).replace("\\partial", "d"))
     if isinstance(diff_part, sympy.Pow):
         upper_order = diff_part.exp
     else:
         upper_order = 1
     
     if (upper_order != lower_order):
-        print(upper_order)
-        print(lower_order)
         raise Exception("The orders in the numerator and denominator of the derivative do not match")
 
 
